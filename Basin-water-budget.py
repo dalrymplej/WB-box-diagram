@@ -365,25 +365,41 @@ for simulation in ensemble:
     row.extend([Value_Ref_maxmin[i] for i in range(num_periods)])
     #table.append(row)
     
-#  ****** Instream regulatory use *******    
+#  ****** Instream regulatory use *******
+# jd20160921 - this data is no longer output by WW2100 v3.0, so garbage data 
+# is being pulled from Envision output here...
+# but this code only prints to the console, doesn't output anything to the
+# water budget CSV file
     Col_num = 1
-    file_model_csv = "AltWaterMaster_Daily_Metrics_" + scenario + "_Run0.csv"
+    file_model_csv = "ALTWM_Daily_Metrics_" + scenario + "_Run0.csv"
     file_model_csv_w_path = cst.path_data + file_model_csv       # Add path to data & stats files
     data_v = np.array(np.genfromtxt(file_model_csv_w_path, delimiter=',',skip_header=1)) # Read csv file
     data_v1 = mfx(file_model_csv_w_path, column=Col_num, skip=cst.day_of_year_oct1) # Read csv file into matrix
     Value_Ref = [nrc(data_v1,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*period_secs[i]/cst.Willamette_Basin_area_at_PDX*100. for i in range(num_periods)]
     
     Value = nrc(data_v1,[data_yr_start, 1],[data_yr_end,365])*cst.seconds_in_yr/cst.Willamette_Basin_area_at_PDX*100.
-    print "Instream regulatory use (Annual) = ", Value," cm"
-    for i in range(num_periods):
-        print "Instream regulatory use (", period_name[i], ") = ", Value_Ref[i]," cm"
+# jd20160921 - don't bother printing the garbage to the console
+#    print "Instream regulatory use (Annual) = ", Value," cm"
+#    for i in range(num_periods):
+#        print "Instream regulatory use (", period_name[i], ") = ", Value_Ref[i]," cm"
      
 #  ****** Irrigation *******    
-    Col_num = [2,3]
+    Col_num = [4,5] # jd20160921 was [2,3] in WW2100 v2.x
     data_v1 = np.sum([mfx(file_model_csv_w_path, column=j, skip=cst.day_of_year_oct1) for j in Col_num],0)  # Read csv file cols into matrices and sum the matrices
-    Value_Ref = [nrc(data_v1,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*period_secs[i]/cst.Willamette_Basin_area*100. for i in range(num_periods)]
-    
-    Value = nrc(data_v1,[data_yr_start, 1],[data_yr_end,365])*cst.seconds_in_yr/cst.Willamette_Basin_area*100.
+
+# jd20160921 - units have changed in WW2100 output from v2.x to v3.0
+# now irrigation data is in units of m**3/day (was m**3/sec)
+# the units of the result are cm of H2O as if applied to the entire WRB
+# NOTE: nrc() does averaging (not summing) by default
+# hence factor of period_days[i] in following statement
+    Value_Ref = [nrc(data_v1, \
+    [data_yr_start, period_start[i]], [data_yr_end,period_end[i]]) \
+    * period_days[i] / cst.Willamette_Basin_area * 100. for i in range(num_periods)]
+# and hence factor of 365. in following statement    
+    Value = \
+    nrc(data_v1, [data_yr_start, 1],[data_yr_end, 365]) * 365. \
+    / cst.Willamette_Basin_area * 100.
+
     print "Irrigation water diverted (Annual) = ", Value," cm"
     for i in range(num_periods):
         print "Irrigation water diverted (", period_name[i], ") = ", Value_Ref[i]," cm"
@@ -404,12 +420,24 @@ for simulation in ensemble:
     #************************
     
 #  ****** Municipal water use *******    
-    Col_num = range(1,9)
+    Col_num = range(1,9) # spreadsheet columns BCDEFGHI
     file_model_csv = "Daily_Urban_Water_Demand_Summary_" + scenario + "_Run0.csv"
-    file_model_csv_w_path = cst.path_data + file_model_csv       # Add path to data & stats files
+    file_model_csv_w_path = cst.path_data + file_model_csv # Add path to data & stats files
     data_v1 = np.sum([mfx(file_model_csv_w_path, column=j, skip=cst.day_of_year_oct1) for j in Col_num],0)  # Read csv file cols into matrices and sum the matrices
-    Value_Ref = [nrc(data_v1,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*100*period_days[i]*cst.cfs_to_m3/cst.Willamette_Basin_area*100.*1.11386 for i in range(num_periods)]
-    
+
+    fudge_factor = 1.11386  # undocumented - what is this?
+
+    Value_Ref = [nrc(data_v1, \
+    [data_yr_start, period_start[i]], [data_yr_end, period_end[i]]) \
+    * period_days[i] * (100. * cst.cfs_to_m3) / cst.Willamette_Basin_area \
+    * 100. * fudge_factor for i in range(num_periods)]
+
+    # jd20160922 following statement is informed by the pattern of the irrigation
+    # code above and the scale factors in the print statements below
+    Value = \
+    nrc(data_v1, [data_yr_start, 1], [data_yr_end, 365]) * 365. \
+    * (100. * cst.cfs_to_m3) * fudge_factor
+
     if era != 'future':
         print "Municipal & domestic water diverted (Annual) = ", sum(Value_Ref)," cm"    
     else:
@@ -433,7 +461,16 @@ for simulation in ensemble:
     data_uwd = np.roll(data_uwd,(365-cst.day_of_year_oct1)) # Re-order numbers so that first number is on Oct. 1
     data_v2 = np.subtract(data_v1,data_v1 * data_uwd)
     data_v2= data_v2 * urban_irrigation_efficiency
-    Value_Ref = [nrc(data_v2,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*100*period_days[i]*cst.cfs_to_m3/cst.Willamette_Basin_area*100.*1.11386 for i in range(num_periods)]
+    
+    # jd20160922 - unwrapped and rearranged long statement, for readability
+    Value_Ref = \
+    [nrc(data_v2, [data_yr_start, period_start[i]], [data_yr_end, period_end[i]])
+    * period_days[i] * (100. * cst.cfs_to_m3) / cst.Willamette_Basin_area
+    * 100. * fudge_factor for i in range(num_periods)]
+    # cloned following statement from muni-domestic code above (just changed data_v1 to data_v2)
+    Value = \
+    nrc(data_v2, [data_yr_start, 1], [data_yr_end, 365]) * 365. \
+    * (100. * cst.cfs_to_m3) * fudge_factor
     
     if era != 'future':
         print "Municipal & domestic water Consumed (Annual) = ", sum(Value_Ref)," cm"    
