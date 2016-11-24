@@ -270,16 +270,26 @@ for simulation in ensemble:
     
 #  ****** Actual Evapotranspiration *******    
     Col_num = 1
-    file_model_csv = "HBV_ET_(mm)_by_elev_0-200-1200_" + scenario + "_Run0.csv"
+    file_model_csv = "HBV_ET_(mm)_by_elev_0-200-1200_" + scenario + "_Run0.csv"   #bookmark
     file_model_csv_w_path = cst.path_data + file_model_csv       # Add path to data & stats files
     data_v1 = mfx(file_model_csv_w_path, column=Col_num, skip=cst.day_of_year_oct1) # Read csv file into matrix
     Value_Ref = [nrc(data_v1,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*period_days[i]/10. for i in range(num_periods)]
     
-    Value = nrc(data_v1,[data_yr_start, 1],[data_yr_end,365])*365./10.
-    print "Basin-wide avg AET (Annual) = ", Value," cm"
+    # Get snow evaporation and add to ET
+    Col_num = 5
+    file_model_csv2 = "HBV_mass_balance_(mm_H2O)_" + scenario + "_Run0.csv"   #bookmark
+    file_model_csv2_w_path = cst.path_data + file_model_csv2       # Add path to data & stats files
+    data_v2 = mfx(file_model_csv2_w_path, column=Col_num, skip=cst.day_of_year_oct1) # Read csv file into matrix
+    Value_Ref2 = [nrc(data_v2,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*period_days[i]/10. for i in range(num_periods)]
+    
+    Value_Ref = np.add(Value_Ref, Value_Ref2)
+        
+    Value = nrc(data_v1,[data_yr_start, 1],[data_yr_end,365])*365./10. \
+          + nrc(data_v2,[data_yr_start, 1],[data_yr_end,365])*365./10.
+    print "Basin-wide avg AET (Annual) incl Snow Evap = ", Value," cm"
     for i in range(num_periods):
-        print "Basin-wide avg AET (", period_name[i], ") = ", Value_Ref[i]," cm"
-    row = [7, 'Act EvapoTrans']
+        print "Basin-wide avg AET incl Snow Evap (", period_name[i], ") = ", Value_Ref[i]," cm"
+    row = [7, 'Act EvapoTrans incl Snow Evap']
     row.append(Value)
     row.extend([Value_Ref[i] for i in range(num_periods)])
     table.append(row)
@@ -408,6 +418,20 @@ for simulation in ensemble:
     row.extend([Value_Ref[i] for i in range(num_periods)])
     table.append(row)
     
+#  ****** Out-of-Basin transfers *******    
+    Col_num = [6]
+    data_v2 = mfx(file_model_csv_w_path, column=Col_num, skip=cst.day_of_year_oct1) # Read csv file into matrix
+    Value_Ref2 = [nrc(data_v1,[data_yr_start, period_start[i]],[data_yr_end,period_end[i]])*period_secs[i]/cst.Willamette_Basin_area*100./86400. for i in range(num_periods)]
+    
+    Value2 = nrc(data_v2,[data_yr_start, 1],[data_yr_end,365])*cst.seconds_in_yr/cst.Willamette_Basin_area*100.
+    print "Out-of-basin transfers into WRB (Annual) = ", Value2," cm"
+    for i in range(num_periods):
+        print "Out-of-basin transfers (", period_name[i], ") = ", Value_Ref2[i]," cm"
+    row = [119, 'Out-of-Basin transfers']
+    row.append(Value2)
+    row.extend([Value_Ref2[i] for i in range(num_periods)])
+    table.append(row)
+    
 #  ****** Irrigation water lost to ET *******    
     # Agricultural water consumed  PLACEHOLDER. This will need work once we have a way of calculating from Envision output or other
     Ag_AET_fraction = 0.75
@@ -467,6 +491,7 @@ for simulation in ensemble:
     [nrc(data_v2, [data_yr_start, period_start[i]], [data_yr_end, period_end[i]])
     * period_days[i] * (100. * cst.cfs_to_m3) / cst.Willamette_Basin_area
     * 100. * fudge_factor for i in range(num_periods)]
+
     # cloned following statement from muni-domestic code above (just changed data_v1 to data_v2)
     Value = \
     nrc(data_v2, [data_yr_start, 1], [data_yr_end, 365]) * 365. \
@@ -524,7 +549,7 @@ for simulation in ensemble:
     
 #  ****** Change in soil moisture (SoilDelta) *******    
 #     Calculated as a residual
-    row = [6.1, 'SoilDelta']
+    row = [6.1, 'SoilDelta']    #bookmark
     SoilDelta = num_periods*[0.]
     pos_SoilDelta = 0.  # Needed for precip evaporation problem
     for i in range(num_periods):
@@ -534,21 +559,35 @@ for simulation in ensemble:
     totalSoilDelta = sum(SoilDelta)
     SoilDelta_beforeCorrection = [totalSoilDelta] # Needed for precip evaporation problem
     SoilDelta_beforeCorrection.extend(SoilDelta) # Needed for precip evaporation problem
-    ET_correction = [totalSoilDelta] # Needed for precip evaporation problem
-#    row.append(totalSoilDelta)
-    row.append(0.)  # Needed for precip evaporation problem  UNCOMMENT PREVIOUS LINE
-    for i in range(num_periods):  # This whole loop Needed for precip evaporation problem
-        if SoilDelta[i] > 0. and totalSoilDelta > 0: 
-            ET_correction.append(SoilDelta[i] - SoilDelta[i]*(pos_SoilDelta-totalSoilDelta)/pos_SoilDelta) # Needed for precip evaporation problem
-            SoilDelta[i] = SoilDelta[i]*(pos_SoilDelta-totalSoilDelta)/pos_SoilDelta  # Needed for precip evaporation problem
-        else:  # Needed for precip evaporation problem
-            ET_correction.append(0.)  # Needed for precip evaporation problem
+    HCGW = -1.*totalSoilDelta # Needed for High Cascades GW correction
+    HCGW_mthly = num_periods*[-1.*totalSoilDelta/12.]
+    row.append(0.0)
+    SoilDelta = np.add(SoilDelta, HCGW_mthly)
+#    row.append(0.)  # Needed for precip evaporation problem  UNCOMMENT PREVIOUS LINE
+#    for i in range(num_periods):  # This whole loop Needed for precip evaporation problem
+#        if SoilDelta[i] > 0. and totalSoilDelta > 0: 
+#            ET_correction.append(SoilDelta[i] - SoilDelta[i]*(pos_SoilDelta-totalSoilDelta)/pos_SoilDelta) # Needed for precip evaporation problem
+#            SoilDelta[i] = SoilDelta[i]*(pos_SoilDelta-totalSoilDelta)/pos_SoilDelta  # Needed for precip evaporation problem
+#        else:  # Needed for precip evaporation problem
+#            ET_correction.append(0.)  # Needed for precip evaporation problem
     row.extend(SoilDelta)
+    print row
     table.append(row)
-    
-    ActET_row = table[3]  # Needed for precip evaporation problem
-    ActET_row [2:] = np.add(ActET_row [2:], ET_correction)  # Needed for precip evaporation problem
-    table[3] = ActET_row  # Needed for precip evaporation problem
+#    
+#    ActET_row = table[3]  # Needed for precip evaporation problem
+#    ActET_row [2:] = np.add(ActET_row [2:], ET_correction)  # Needed for precip evaporation problem
+#    table[3] = ActET_row  # Needed for precip evaporation problem
+
+#  ****** High Cascades Groundwater *******    
+#     Calculated as a residual - needs to be updated with daily values
+    row = [120, 'High Cascades GW']
+    HCGW_envision = 8.16  #cm/y averaged over the WB that is contributed by High Cascades GW, estimated from Envision runs.  Info from Dave Conklin 10/22/16
+    row.append(HCGW_envision)
+    row.extend(12*[HCGW_envision/12.])    
+#    row.append(HCGW)
+#    row.extend(HCGW_mthly)    
+    print "High Cascades Groundwater Contribution (Annual) = ", HCGW," cm"
+    table.append(row)
 
 #******************************************************************************
 #  ****** Prep and save information to table *******    
